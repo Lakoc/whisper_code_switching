@@ -6,8 +6,8 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 if __name__ == "__main__":
     SPLIT = "validation"
-    PAUSE = 2.0
-    MAX_SINGLE_LAN_SEGMENT_LEN = 14.0
+    PAUSE = 1.0
+    MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
@@ -50,9 +50,11 @@ if __name__ == "__main__":
                            sampling_rate=en_sample["audio"]["sampling_rate"],
                            return_tensors="pt",
                            return_attention_mask=True).to(device, dtype=torch_dtype)
+        # skip_special_tokens=True: all special tokens are removed
         gt_text = f"<|en|><|0.00|>{en_sample['transcription']}<|{round(en_sample['num_samples'] / 16_000, 2)}|> <|cs|><|{round(en_sample['num_samples'] / 16_000, 2) + PAUSE}|>{cz_sample['transcription']}<|{round(en_sample['num_samples'] / 16_000, 2) + PAUSE + round(cz_sample['num_samples'] / 16_000, 2)}|>"
         pred_ids = model.generate(**inputs, **gen_kwargs)
         generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
+        # this removes the special tokens for the ground truth
         gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
         gt.append(gt_text_normalised)
         hyp.append(generated_text)
@@ -62,5 +64,5 @@ if __name__ == "__main__":
 
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
     df.to_csv("results_default.csv")
-    metrics = jiwer.compute_measures(gt, hyp)
-    print(metrics)
+    metrics = jiwer.process_words(gt, hyp)
+    print(metrics.wer)
