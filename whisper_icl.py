@@ -29,7 +29,7 @@ if __name__ == "__main__":
     dataset_cs = dataset_cs.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
 
     gen_kwargs = {
-        "max_new_tokens": 440,
+        "max_new_tokens": 300, # The length of `decoder_input_ids` equal `prompt_ids` plus special start tokens is 54, and the `max_new_tokens` is 440. Thus, the combined length of `decoder_input_ids` and `max_new_tokens` is: 494. This exceeds the `max_target_positions` of the Whisper model: 448. You should either reduce the length of your prompt, or reduce the value of `max_new_tokens`, so that their combined length is less than 448.
         "num_beams": 1,
         "return_timestamps": True,
     }
