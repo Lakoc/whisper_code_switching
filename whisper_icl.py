@@ -1,4 +1,4 @@
-from random import random
+import random
 import jiwer
 import numpy as np
 import torch
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         # select in-context example
         in_context_index = index
         while in_context_index == index:
-            in_context_index = random.randint(0, min_number_of_samples)
+            in_context_index = random.randint(0, min_number_of_samples - 1)
         ic_en, ic_cz = dataset_en[SPLIT][in_context_index], dataset_cs[SPLIT][in_context_index]
 
         concatenated_sample = torch.from_numpy(np.concatenate(
