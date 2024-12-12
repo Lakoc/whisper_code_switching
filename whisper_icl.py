@@ -86,11 +86,16 @@ if __name__ == "__main__":
 
         # set the prefix (in-context text) with decoder_input_ids
         # add_special_tokens=True to make sure we include <|startoftranscript|><|notimestamps|>
-        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=True)
+        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=True, return_tensors="pt").to(device)
+        # remove <EOT> to prevent Whisper from terminating
+        context_token_ids = context_token_ids[:, :-1]
+        context_labels_length = context_token_ids.shape[1]
         gen_kwargs['decoder_input_ids'] = context_token_ids
-        # can test with processor.tokenizer.decode(context_token_ids)
+        # can inspect what the context looks like with processor.tokenizer.decode(context_token_ids)
 
         pred_ids = model.generate(**inputs, **gen_kwargs)
+        # remove the in-context example from the reference using context_labels_length
+        pred_ids = pred_ids[:, context_labels_length:]
         generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
         gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
         gt.append(gt_text_normalised)
