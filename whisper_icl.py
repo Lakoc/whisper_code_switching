@@ -73,7 +73,9 @@ if __name__ == "__main__":
         time_ic_cz_start = time_ic_en_end + PAUSE
         time_ic_cz_end = time_ic_cz_start + round(ic_cz['num_samples'] / 16_000, 2)
         gt_context_readable = f"<|en|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|> <|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
-        gt_context = f"<|en|>{ic_en['transcription']} <|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+        # note - Whisper will not duplicate our language tokens
+            # but will add the <SOT><no timestamp>
+        gt_context = f"<|en|>ic_en['transcription']} <|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
 
         time_en_start = time_ic_cz_end + PAUSE
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
@@ -82,18 +84,12 @@ if __name__ == "__main__":
         # adding the timestamp for visual inspection only
         gt_text = f"<|en|><|{time_en_start}|>{en_sample['transcription']}<|{time_en_start}|> <|cs|><|{time_cz_start}|>{cz_sample['transcription']}<|{time_cz_end}|>"
 
-        # set the prefix (in-context text) with forced_decoder_ids or input_ids
-        # TODO:         forced_decoder_ids=[[0, 454], [2, 50360], [3, 50361]
-            # map 0 to SOT
-            # map 1 to <en>
-            # map 2 to <transcribe>
-            # 3 and onward is the transcript
-            # TODO: not sure if we need to remove the lang tokens from the string
-            # TODO: pycharm - inspect the tokenizer
-        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=False)
-        gen_kwargs.forced_decoder_ids = # TODO: see format above
+        # set the prefix (in-context text) with decoder_input_ids
+        # add_special_tokens=True to make sure we include <|startoftranscript|><|notimestamps|>
+        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=True)
+        gen_kwargs['decoder_input_ids'] = context_token_ids
+        # can test with processor.tokenizer.decode(context_token_ids)
 
-        # TODO: make sure we don't duplicate <SOT>
         pred_ids = model.generate(**inputs, **gen_kwargs)
         generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
         gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
@@ -102,7 +98,6 @@ if __name__ == "__main__":
         print(processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True,
                                          decode_with_timestamps=True))
         print(processor.decode(pred_ids[0], skip_special_tokens=True, decode_with_timestamps=True))
-        # TODO: do we need to remove the prefix from the decoded part?
 
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
     df.to_csv("results_icl.csv")
