@@ -105,5 +105,5 @@ if __name__ == "__main__":
 
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
     df.to_csv("results_icl.csv")
-    metrics = jiwer.compute_measures(gt, hyp)
-    print(metrics)
+    metrics = jiwer.process_words(gt, hyp)
+    print(metrics.wer)
