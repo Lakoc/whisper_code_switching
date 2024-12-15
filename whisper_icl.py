@@ -7,6 +7,7 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 
 if __name__ == "__main__":
+    SPEECH_CONTEXT = False  # True: include audio in the prompt/context
     SPLIT = "validation"
     PAUSE = 1.0
     MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
@@ -51,18 +52,27 @@ if __name__ == "__main__":
             in_context_index = random.randint(0, min_number_of_samples - 1)
         ic_en, ic_cz = dataset_en[SPLIT][in_context_index], dataset_cs[SPLIT][in_context_index]
 
-        concatenated_sample = torch.from_numpy(np.concatenate(
-            [
+        # target utterance
+        target_audio = np.concatenate([
+            en_sample["audio"]["array"],
+            np.zeros(round(en_sample["audio"]["sampling_rate"] * PAUSE)),
+            cz_sample["audio"]["array"],
+        ])
+        if SPEECH_CONTEXT:
+            audio = np.concatenate([
                 # in-context example
                 ic_en["audio"]["array"],
                 np.zeros(round(ic_en["audio"]["sampling_rate"] * PAUSE)),
                 ic_cz["audio"]["array"],
                 np.zeros(round(ic_en["audio"]["sampling_rate"] * PAUSE)),
-                # target utterance
-                en_sample["audio"]["array"],
-                np.zeros(round(en_sample["audio"]["sampling_rate"] * PAUSE)),
-                cz_sample["audio"]["array"]
-             ]))
+                target_audio
+            ])
+        else:
+            # no speech in the context
+            # text-only context
+            audio = target_audio
+
+        concatenated_sample = torch.from_numpy(audio)
         inputs = processor(concatenated_sample,
                            sampling_rate=en_sample["audio"]["sampling_rate"],
                            return_tensors="pt",
@@ -74,7 +84,11 @@ if __name__ == "__main__":
         time_ic_cz_end = time_ic_cz_start + round(ic_cz['num_samples'] / 16_000, 2)
         # note - Whisper will not duplicate our language tokens
             # but will add the <SOT><no timestamp>
-        gt_context = f"<|en|><|cs|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+        if SPEECH_CONTEXT:
+            gt_context = f"<|en|><|cs|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+        else:
+            # no speech in the context, thus no timestamps
+            gt_context = f"<|en|><|cs|>{ic_en['transcription']}{ic_cz['transcription']}"
 
         time_en_start = time_ic_cz_end + PAUSE
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
