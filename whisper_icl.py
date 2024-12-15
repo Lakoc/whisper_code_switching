@@ -75,7 +75,7 @@ if __name__ == "__main__":
         gt_context_readable = f"<|en|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
         # note - Whisper will not duplicate our language tokens
             # but will add the <SOT><no timestamp>
-        gt_context = f"<|en|>{ic_en['transcription']}<|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+        gt_context = f"<|en|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|cs|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
 
         time_en_start = time_ic_cz_end + PAUSE
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
