@@ -78,17 +78,22 @@ if __name__ == "__main__":
                            return_tensors="pt",
                            return_attention_mask=True).to(device, dtype=torch_dtype)
 
+        # TODO: what do whisper timestamps look like? am i doing it right?
         # target utterance
         time_ic_en_end = round(ic_en['num_samples'] / 16_000, 2)
         time_ic_cz_start = time_ic_en_end + PAUSE
         time_ic_cz_end = time_ic_cz_start + round(ic_cz['num_samples'] / 16_000, 2)
-        # note - Whisper will not duplicate our language tokens
-            # but will add the <SOT><no timestamp>
+        # note - in both branches, we omit the <|transcribe|> task token
         if SPEECH_CONTEXT:
-            gt_context = f"<|en|><|cs|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+            # we manually add special tokens to be consistent with the other branch
+            # where Whisper will actually duplicate the tokens
+            gt_context = f"<|startoftranscript|><|en|><|cs|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
         else:
+            # add start_of_prev manually
+                # no timestamp or lang token though
             # no speech in the context, thus no timestamps
-            gt_context = f"<|en|><|cs|>{ic_en['transcription']}{ic_cz['transcription']}"
+            # note: unlike with the normal transcription, a space is expected in the prompt
+            gt_context = f"<|startofprev|> {ic_en['transcription']}{ic_cz['transcription']}<|startoftranscript|>"
 
         time_en_start = time_ic_cz_end + PAUSE
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
@@ -98,13 +103,15 @@ if __name__ == "__main__":
         gt_text = f"<|en|><|{time_en_start}|>{en_sample['transcription']}<|{time_en_start}|> <|cs|><|{time_cz_start}|>{cz_sample['transcription']}<|{time_cz_end}|>"
 
         # set the prefix (in-context text) with decoder_input_ids
-        # add_special_tokens=True to make sure we include <|startoftranscript|><|notimestamps|>
-        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=True, return_tensors="pt").to(device)
-        # remove <EOT> to prevent Whisper from terminating
-        context_token_ids = context_token_ids[:, :-1]
+        # add_special_tokens=False because we already manually included <|startoftranscript|><|notimestamps|>
+        # thus doing so will duplicate <|startoftranscript|>
+        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=False, return_tensors="pt").to(device)
+        # note that we manually added the special tokens, of which <|endoftext|> was not one of them
+        # thus we do not need to remove <EOT>
+        # (whereas add_special_tokens=True will add this token and we need to remove it to prevent early termination)
         context_labels_length = context_token_ids.shape[1]
         gen_kwargs['decoder_input_ids'] = context_token_ids
-        # can inspect what the context looks like with processor.tokenizer.decode(context_token_ids)
+        # can inspect what the context looks like with processor.tokenizer.decode(context_token_ids, skip_special_tokens=False)
 
         pred_ids = model.generate(**inputs, **gen_kwargs)
         # remove the in-context example from the reference using context_labels_length
