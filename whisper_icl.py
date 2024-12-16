@@ -93,7 +93,7 @@ if __name__ == "__main__":
                 # no timestamp or lang token though
             # no speech in the context, thus no timestamps
             # note: unlike with the normal transcription, a space is expected in the prompt
-            gt_context = f"<|startofprev|> {ic_en['transcription']}{ic_cz['transcription']}<|startoftranscript|>"
+            gt_context = f"<|startofprev|> {ic_en['transcription']}{ic_cz['transcription']}<|startoftranscript|><|en|><|cs|><|transcribe|>"
 
         time_en_start = time_ic_cz_end + PAUSE
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
