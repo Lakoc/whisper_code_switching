@@ -8,6 +8,12 @@ from datasets import load_dataset, Audio, Dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, set_seed
 
 
+def normalize_text(processor, text):
+    # preserves diacritics
+    # removes punctuation and performs lowercasing
+    return processor.tokenizer.basic_normalize(text)
+
+
 def get_parser():
     parser = argparse.ArgumentParser(
         description="Whisper with speech in-context learning (Wang et al 2024)"
@@ -114,13 +120,25 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         pred_ids = pred_ids[:, context_labels_length:]
         generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
         gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
-        gt.append(gt_text_normalised)
-        # TODO: normalize both texts?
-        hyp.append(generated_text)
-        print("ref", processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True,
-                                         decode_with_timestamps=True))
-        print("hyp", processor.decode(pred_ids[0], skip_special_tokens=True, decode_with_timestamps=True))
+
+        # add timestamps for visualization, use pre-normalized text
+        print("gold", processor.tokenizer.decode(
+            processor.tokenizer.encode(gt_text),
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
+        print("hyp", processor.decode(
+            pred_ids[0],
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
         print()
+
+        gt_text_normalised = normalize_text(processor, gt_text_normalised)
+        generated_text = normalize_text(processor, generated_text)
+
+        gt.append(gt_text_normalised)
+        hyp.append(generated_text)
 
     # TODO: note - our timestamp is off by exactly 1 second
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})

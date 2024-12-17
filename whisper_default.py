@@ -7,6 +7,11 @@ from datasets import load_dataset, Audio, Dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, set_seed
 
 
+def normalize_text(processor, text):
+    # preserves diacritics
+    # removes punctuation and performs lowercasing
+    return processor.tokenizer.basic_normalize(text)
+
 def evaluate(model, processor, dataset_en, dataset_cs,
              device, seed=11711,
              pause=1.0,
@@ -39,12 +44,25 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
         # this removes the special tokens for the ground truth
         gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
+
+        # add timestamps for visualization, use pre-normalized text
+        print("gold", processor.tokenizer.decode(
+            processor.tokenizer.encode(gt_text),
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
+        print("hyp", processor.decode(
+            pred_ids[0],
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
+        print()
+
+        gt_text_normalised = normalize_text(processor, gt_text_normalised)
+        generated_text = normalize_text(processor, generated_text)
+
         gt.append(gt_text_normalised)
         hyp.append(generated_text)
-        print("gold", processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True,
-                                         decode_with_timestamps=True))
-        print("hyp", processor.decode(pred_ids[0], skip_special_tokens=True, decode_with_timestamps=True))
-        print()
 
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
     df.to_csv(f"results/default_{run}.csv")
