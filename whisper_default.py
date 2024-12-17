@@ -19,6 +19,7 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         "max_new_tokens": 440,
         "num_beams": 1,
         "return_timestamps": True,
+        "repetition_penalty": 1.2
     }
 
     # create new dataset by concatenating samples from two languages

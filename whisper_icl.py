@@ -35,6 +35,7 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         "max_new_tokens": 300, # The length of `decoder_input_ids` equal `prompt_ids` plus special start tokens is 54, and the `max_new_tokens` is 440. Thus, the combined length of `decoder_input_ids` and `max_new_tokens` is: 494. This exceeds the `max_target_positions` of the Whisper model: 448. You should either reduce the length of your prompt, or reduce the value of `max_new_tokens`, so that their combined length is less than 448.
         "num_beams": 1,
         "return_timestamps": True,
+        "repetition_penalty": 1.2
     }
 
     # create new dataset by concatenating samples from two languages
@@ -123,7 +124,7 @@ def evaluate(model, processor, dataset_en, dataset_cs,
 
     # TODO: note - our timestamp is off by exactly 1 second
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
-    df.to_csv(f"results_icl_{run}.csv")
+    df.to_csv(f"results/icl_{('in' if speech_context else 'ex') + 'clude_speech'}_{run}.csv")
     metrics = jiwer.process_words(gt, hyp)
     print(metrics.wer)
     return metrics.wer
@@ -131,6 +132,7 @@ def evaluate(model, processor, dataset_en, dataset_cs,
 if __name__ == "__main__":
     parser = get_parser()
     args = parser.parse_args()
+    print(args)
 
     SPEECH_CONTEXT = args.speech_context  # True: include audio in the prompt/context
     
