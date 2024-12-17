@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 import random
 
 import jiwer
@@ -16,7 +17,15 @@ def normalize_text(processor, text):
 
 def get_parser():
     parser = argparse.ArgumentParser(
-        description="Whisper with speech in-context learning (Wang et al 2024)"
+        description="Whisper with speech in-context learning (Wang et al 2024)\
+            for English-X codeswitching"
+    )
+    parser.add_argument(
+        "--lang_code",
+        default="cs_cz",
+        required=True,
+        choices=["cs_cz", "ar_eg"],
+        help="FLEURS language code. lang_locale"
     )
     parser.add_argument(
         "--speech_context",
@@ -29,14 +38,15 @@ def get_parser():
     return parser
 
 
-def evaluate(model, processor, dataset_en, dataset_cs,
+def evaluate(model, processor,
+             dataset_en, dataset_xx, lang,
              device, seed=11711, speech_context=True,
              pause=1.0,
              run=0):
     # fix the seed
     set_seed(seed)
 
-    min_number_of_samples = min(len(dataset_en), len(dataset_cs))
+    min_number_of_samples = min(len(dataset_en), len(dataset_xx))
     gen_kwargs = {
         "max_new_tokens": 300, # The length of `decoder_input_ids` equal `prompt_ids` plus special start tokens is 54, and the `max_new_tokens` is 440. Thus, the combined length of `decoder_input_ids` and `max_new_tokens` is: 494. This exceeds the `max_target_positions` of the Whisper model: 448. You should either reduce the length of your prompt, or reduce the value of `max_new_tokens`, so that their combined length is less than 448.
         "num_beams": 1,
@@ -47,25 +57,25 @@ def evaluate(model, processor, dataset_en, dataset_cs,
     # create new dataset by concatenating samples from two languages
     gt = []
     hyp = []
-    for index, (en_sample, cz_sample) in enumerate(zip(dataset_en, dataset_cs)):
+    for index, (en_sample, xx_sample) in enumerate(zip(dataset_en, dataset_xx)):
         # select in-context example
         in_context_index = index
         while in_context_index == index:
             in_context_index = random.randint(0, min_number_of_samples - 1)
-        ic_en, ic_cz = dataset_en[in_context_index], dataset_cs[in_context_index]
+        ic_en, ic_xx = dataset_en[in_context_index], dataset_xx[in_context_index]
 
         # target utterance
         target_audio = np.concatenate([
             en_sample["audio"]["array"],
             np.zeros(round(en_sample["audio"]["sampling_rate"] * pause)),
-            cz_sample["audio"]["array"],
+            xx_sample["audio"]["array"],
         ])
         if SPEECH_CONTEXT:
             audio = np.concatenate([
                 # in-context example
                 ic_en["audio"]["array"],
                 np.zeros(round(ic_en["audio"]["sampling_rate"] * pause)),
-                ic_cz["audio"]["array"],
+                ic_xx["audio"]["array"],
                 np.zeros(round(ic_en["audio"]["sampling_rate"] * pause)),
                 target_audio
             ])
@@ -83,26 +93,26 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         # TODO: what do whisper timestamps look like? am i doing it right?
         # target utterance
         time_ic_en_end = round(ic_en['num_samples'] / 16_000, 2)
-        time_ic_cz_start = time_ic_en_end + pause
-        time_ic_cz_end = time_ic_cz_start + round(ic_cz['num_samples'] / 16_000, 2)
+        time_ic_xx_start = time_ic_en_end + pause
+        time_ic_xx_end = time_ic_xx_start + round(ic_xx['num_samples'] / 16_000, 2)
         # note - in both branches, we omit the <|transcribe|> task token
         if SPEECH_CONTEXT:
             # we manually add special tokens to be consistent with the other branch
             # where Whisper will actually duplicate the tokens
-            gt_context = f"<|startoftranscript|><|en|><|cs|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_cz_start}|>{ic_cz['transcription']}<|{time_ic_cz_end}|>"
+            gt_context = f"<|startoftranscript|><|en|><|{lang}|><|0.00|>{ic_en['transcription']}<|{time_ic_en_end}|><|{time_ic_xx_start}|>{ic_xx['transcription']}<|{time_ic_xx_end}|>"
         else:
             # add start_of_prev manually
                 # no timestamp or lang token though
             # no speech in the context, thus no timestamps
             # note: unlike with the normal transcription, a space is expected in the prompt
-            gt_context = f"<|startofprev|> {ic_en['transcription']}{ic_cz['transcription']}<|startoftranscript|><|en|><|cs|><|transcribe|>"
+            gt_context = f"<|startofprev|> {ic_en['transcription']}{ic_xx['transcription']}<|startoftranscript|><|en|><|{lang}|><|transcribe|>"
 
-        time_en_start = time_ic_cz_end + pause
+        time_en_start = time_ic_xx_end + pause
         time_en_end = time_en_start + round(en_sample['num_samples'] / 16_000, 2)
-        time_cz_start = time_en_end + pause
-        time_cz_end = time_cz_start + round(cz_sample['num_samples'] / 16_000, 2)
+        time_xx_start = time_en_end + pause
+        time_xx_end = time_xx_start + round(xx_sample['num_samples'] / 16_000, 2)
         # adding the timestamp for visual inspection only
-        gt_text = f"<|en|><|{time_en_start}|>{en_sample['transcription']}<|{time_en_start}|> <|cs|><|{time_cz_start}|>{cz_sample['transcription']}<|{time_cz_end}|>"
+        gt_text = f"<|en|><|{time_en_start}|>{en_sample['transcription']}<|{time_en_start}|> <|{lang}|><|{time_xx_start}|>{xx_sample['transcription']}<|{time_xx_end}|>"
 
         # set the prefix (in-context text) with decoder_input_ids
         # add_special_tokens=False because we already manually included <|startoftranscript|><|notimestamps|>
@@ -141,8 +151,9 @@ def evaluate(model, processor, dataset_en, dataset_cs,
         hyp.append(generated_text)
 
     # TODO: note - our timestamp is off by exactly 1 second
+    Path(f"results/{lang}/").mkdir(parents=True, exist_ok=True)
     df = Dataset.from_dict({"gt": gt, "hyp": hyp})
-    df.to_csv(f"results/icl_{('in' if speech_context else 'ex') + 'clude_speech'}_{run}.csv")
+    df.to_csv(f"results/{lang}/icl_{('in' if speech_context else 'ex') + 'clude_speech'}_{run}.csv")
     metrics = jiwer.process_words(gt, hyp)
     print(metrics.wer)
     return metrics.wer
@@ -153,7 +164,9 @@ if __name__ == "__main__":
     print(args)
 
     SPEECH_CONTEXT = args.speech_context  # True: include audio in the prompt/context
-    
+    LANG_CODE = args.lang_code
+    LANG = LANG_CODE.split("_")[0]
+
     SPLIT = "validation"
     PAUSE = 1.0
     MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
@@ -171,12 +184,12 @@ if __name__ == "__main__":
     processor = AutoProcessor.from_pretrained(model_id)
 
     dataset_en = load_dataset("google/fleurs", "en_us", cache_dir="/run/user/1000/data")
-    dataset_cs = load_dataset("google/fleurs", "cs_cz", cache_dir="/run/user/1000/data")
+    dataset_xx = load_dataset("google/fleurs", LANG_CODE, cache_dir="/run/user/1000/data")
     dataset_en = dataset_en.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
-    dataset_cs = dataset_cs.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
+    dataset_xx = dataset_xx.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
 
     # Limit the samples length in the train split to 15s to be able to easily concatenate them
-    for dataset in [dataset_en, dataset_cs]:
+    for dataset in [dataset_en, dataset_xx]:
         dataset[SPLIT] = dataset[SPLIT].filter(
             lambda x: (x["num_samples"] / x['audio']['sampling_rate']) < MAX_SINGLE_LAN_SEGMENT_LEN)
 
@@ -185,7 +198,8 @@ if __name__ == "__main__":
     runs = []
     for run, seed in enumerate([random.randint(10000, 99999) for _ in range(10)]):
         wer = evaluate(
-            model, processor, dataset_en[SPLIT], dataset_cs[SPLIT],
+            model, processor,
+            dataset_en[SPLIT], dataset_xx[SPLIT], LANG,
             device, seed, SPEECH_CONTEXT, PAUSE,
             run
         )
