@@ -1,3 +1,4 @@
+import argparse
 import random
 
 import jiwer
@@ -5,6 +6,21 @@ import numpy as np
 import torch
 from datasets import load_dataset, Audio, Dataset
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, set_seed
+
+
+def get_parser():
+    parser = argparse.ArgumentParser(
+        description="Whisper with speech in-context learning (Wang et al 2024)"
+    )
+    parser.add_argument(
+        "--speech_context",
+        default=True,
+        required=True,
+        action=argparse.BooleanOptionalAction,
+        help="Whether or not to include speech in the context.\
+            --speech_context or --no-speech_context"
+    )
+    return parser
 
 
 def evaluate(model, processor, dataset_en, dataset_cs,
@@ -113,9 +129,11 @@ def evaluate(model, processor, dataset_en, dataset_cs,
     return metrics.wer
 
 if __name__ == "__main__":
-    # TODO: argparse
+    parser = get_parser()
+    args = parser.parse_args()
+
+    SPEECH_CONTEXT = args.speech_context  # True: include audio in the prompt/context
     
-    SPEECH_CONTEXT = True  # True: include audio in the prompt/context
     SPLIT = "validation"
     PAUSE = 1.0
     MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
@@ -152,6 +170,6 @@ if __name__ == "__main__":
             run
         )
         runs.append(wer)
-    
+
     print("WER across", len(runs), "runs:", np.mean(runs), np.std(runs))
     print(runs)
