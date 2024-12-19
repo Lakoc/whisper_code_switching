@@ -15,6 +15,21 @@ def normalize_text(processor, text):
     return processor.tokenizer.basic_normalize(text)
 
 
+def load_sdaia(sampling_rate):
+    sdaia_path = '/mnt/batch/tasks/shared/LS_root/mounts/clusters/node5/code/Users/btalafha/whisper_hack/scc/cs_only_segments.json'
+    sdaia = load_dataset('json', data_files=sdaia_path)
+
+    def update_path(utt):
+        utt['path'] = utt['path'].replace("/tmp/SCC/", "/mnt/batch/tasks/shared/LS_root/mounts/clusters/node5/code/Users/btalafha/whisper_hack/scc/")
+        return utt
+    sdaia = sdaia.map(update_path)
+    sdaia = sdaia.rename_column("file", "audio")
+    sdaia = sdaia.cast_column("audio", Audio(sampling_rate))
+    sdaia = sdaia.rename_column("ref", "transcription")
+    # 2 columns: ref, file -> transcription, audio
+    return sdaia
+
+
 def get_parser():
     parser = argparse.ArgumentParser(
         description="Whisper with speech in-context learning (Wang et al 2024)\
@@ -36,6 +51,116 @@ def get_parser():
             --speech_context or --no-speech_context"
     )
     return parser
+
+
+def evaluate_sdaia(model, processor,
+                   sdaia,
+                   device, seed=11711, speech_context=True,
+                   pause=1.0,
+                   run=0):
+    # fix the seed
+    set_seed(seed)
+
+    gen_kwargs = {
+        "max_new_tokens": 440,
+        "num_beams": 1,
+        "return_timestamps": True,
+        "repetition_penalty": 1.2
+    }
+
+    # create new dataset by concatenating samples from two languages
+    gt = []
+    hyp = []
+    for index, sample in enumerate(sdaia):
+        # select in-context example
+        in_context_index = index
+        while in_context_index == index:
+            in_context_index = random.randint(0, len(sdaia) - 1)
+        ic_example = sdaia[in_context_index]
+
+        # target utterance
+        target_audio = sample
+        if SPEECH_CONTEXT:
+            audio = np.concatenate([
+                # in-context example
+                ic_example,
+                np.zeros(round(sample["audio"]["sampling_rate"] * pause)),
+                target_audio
+            ])
+        else:
+            # no speech in the context
+            # text-only context
+            audio = target_audio
+
+        concatenated_sample = torch.from_numpy(audio)
+        inputs = processor(concatenated_sample,
+                           sampling_rate=sample["audio"]["sampling_rate"],
+                           return_tensors="pt",
+                           return_attention_mask=True).to(device, dtype=torch_dtype)
+
+        # TODO: what do whisper timestamps look like? am i doing it right?
+        time_ic_end = round(ic_example['num_samples'] / 16_000, 2)
+        # note - in both branches, we omit the <|transcribe|> task token
+        if SPEECH_CONTEXT:
+            # we manually add special tokens to be consistent with the other branch
+            # where Whisper will actually duplicate the tokens
+            # TODO: try |ar| first
+            gt_context = f"<|startoftranscript|><|en|><|ar|><|0.00|>{ic_example['transcription']}<|{time_ic_end}|>"
+        else:
+            # add start_of_prev manually
+                # no timestamp or lang token though
+            # no speech in the context, thus no timestamps
+            # note: unlike with the normal transcription, a space is expected in the prompt
+            # TODO: would appending the true timestamp after <|transcribe|> help out?
+            gt_context = f"<|startofprev|> {sample['transcription']}{ic_example['transcription']}<|startoftranscript|><|en|><|ar|><|transcribe|>"
+
+        time_utt_start = time_ic_end + pause
+        time_utt_end = time_utt_start + round(sample['num_samples'] / 16_000, 2)
+        # adding the timestamp for visual inspection only
+        gt_text = f"<|en|><|ar|><|{time_utt_start}|>{sample['transcription']}<|{time_utt_end}|>"
+
+        # set the prefix (in-context text) with decoder_input_ids
+        # add_special_tokens=False because we already manually included <|startoftranscript|><|notimestamps|>
+        # thus doing so will duplicate <|startoftranscript|>
+        context_token_ids = processor.tokenizer.encode(gt_context, add_special_tokens=False, return_tensors="pt").to(device)
+        # note that we manually added the special tokens, of which <|endoftext|> was not one of them
+        # thus we do not need to remove <EOT>
+        # (whereas add_special_tokens=True will add this token and we need to remove it to prevent early termination)
+        context_labels_length = context_token_ids.shape[1]
+        gen_kwargs['decoder_input_ids'] = context_token_ids
+        # can inspect what the context looks like with processor.tokenizer.decode(context_token_ids, skip_special_tokens=False)
+
+        pred_ids = model.generate(**inputs, **gen_kwargs)
+        # remove the in-context example from the reference using context_labels_length
+        pred_ids = pred_ids[:, context_labels_length:]
+        generated_text = processor.decode(pred_ids[0], skip_special_tokens=True)
+        gt_text_normalised = processor.tokenizer.decode(processor.tokenizer.encode(gt_text), skip_special_tokens=True)
+
+        # add timestamps for visualization, use pre-normalized text
+        print("gold", processor.tokenizer.decode(
+            processor.tokenizer.encode(gt_text),
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
+        print("hyp", processor.decode(
+            pred_ids[0],
+            skip_special_tokens=True,
+            decode_with_timestamps=True
+        ))
+        print()
+
+        gt_text_normalised = normalize_text(processor, gt_text_normalised)
+        generated_text = normalize_text(processor, generated_text)
+
+        gt.append(gt_text_normalised)
+        hyp.append(generated_text)
+
+    Path(f"results/sdaia/").mkdir(parents=True, exist_ok=True)
+    df = Dataset.from_dict({"gt": gt, "hyp": hyp})
+    df.to_csv(f"results/sdaia/icl_{('in' if speech_context else 'ex') + 'clude_speech'}_{run}.csv")
+    metrics = jiwer.process_words(gt, hyp)
+    print(metrics.wer)
+    return metrics.wer
 
 
 def evaluate(model, processor,
@@ -169,7 +294,7 @@ if __name__ == "__main__":
 
     SPLIT = "validation"
     PAUSE = 1.0
-    MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
+    MAX_SINGLE_LAN_SEGMENT_LEN = 12.0 if LANG_CODE == "sdaia" else 6.0
 
     device = "cuda:4" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
@@ -183,26 +308,44 @@ if __name__ == "__main__":
 
     processor = AutoProcessor.from_pretrained(model_id)
 
-    dataset_en = load_dataset("google/fleurs", "en_us", cache_dir="/run/user/1000/data")
-    dataset_xx = load_dataset("google/fleurs", LANG_CODE, cache_dir="/run/user/1000/data")
-    dataset_en = dataset_en.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
-    dataset_xx = dataset_xx.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
-
-    # Limit the samples length in the train split to 15s to be able to easily concatenate them
-    for dataset in [dataset_en, dataset_xx]:
-        dataset[SPLIT] = dataset[SPLIT].filter(
+    if LANG_CODE == "sdaia":
+        sdaia = load_sdaia(processor.feature_extractor.sampling_rate)
+        # Limit the samples length in the train split to 15s to be able to easily concatenate them
+        sdaia = sdaia.filter(
             lambda x: (x["num_samples"] / x['audio']['sampling_rate']) < MAX_SINGLE_LAN_SEGMENT_LEN)
+        sdaia = sdaia.filter(
+            lambda x: (x["num_samples"] / x['audio']['sampling_rate']) < MAX_SINGLE_LAN_SEGMENT_LEN)
+    else:
+        dataset_en = load_dataset("google/fleurs", "en_us", cache_dir="/run/user/1000/data")
+        dataset_xx = load_dataset("google/fleurs", LANG_CODE, cache_dir="/run/user/1000/data")
+        dataset_en = dataset_en.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
+        dataset_xx = dataset_xx.cast_column("audio", Audio(processor.feature_extractor.sampling_rate))
+
+        # Limit the samples length in the train split to 15s to be able to easily concatenate them
+        for dataset in [dataset_en, dataset_xx]:
+            dataset[SPLIT] = dataset[SPLIT].filter(
+                lambda x: (x["num_samples"] / x['audio']['sampling_rate']) < MAX_SINGLE_LAN_SEGMENT_LEN)
 
     # try 10 seeds
     random.seed(12345)
     runs = []
     for run, seed in enumerate([random.randint(10000, 99999) for _ in range(10)]):
-        wer = evaluate(
-            model, processor,
-            dataset_en[SPLIT], dataset_xx[SPLIT], LANG,
-            device, seed, SPEECH_CONTEXT, PAUSE,
-            run
-        )
+        if LANG_CODE == "sdaia":
+            # real codeswitching
+            wer = evaluate_sdaia(
+                model, processor,
+                sdaia,
+                device, seed, SPEECH_CONTEXT, PAUSE,
+                run
+            )
+        else:
+            # synthetic codeswitching
+            wer = evaluate(
+                model, processor,
+                dataset_en[SPLIT], dataset_xx[SPLIT], LANG,
+                device, seed, SPEECH_CONTEXT, PAUSE,
+                run
+            )
         runs.append(wer)
 
     print("WER across", len(runs), "runs:", np.mean(runs), np.std(runs))
