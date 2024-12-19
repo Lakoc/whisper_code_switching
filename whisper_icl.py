@@ -16,18 +16,25 @@ def normalize_text(processor, text):
 
 
 def load_sdaia(sampling_rate):
-    sdaia_path = '/mnt/batch/tasks/shared/LS_root/mounts/clusters/node5/code/Users/btalafha/whisper_hack/scc/cs_only_segments.json'
+    sdaia_path = '/eph/nvme0/ipoloka/CHIME2024/cs/data/cs_only_segments.json'
     sdaia = load_dataset('json', data_files=sdaia_path)
 
     def update_path(utt):
-        utt['path'] = utt['path'].replace("/tmp/SCC/", "/mnt/batch/tasks/shared/LS_root/mounts/clusters/node5/code/Users/btalafha/whisper_hack/scc/")
+        utt['file'] = utt['file'].replace("/tmp/SCC/", "/eph/nvme0/ipoloka/CHIME2024/cs/data/")
         return utt
     sdaia = sdaia.map(update_path)
     sdaia = sdaia.rename_column("file", "audio")
     sdaia = sdaia.cast_column("audio", Audio(sampling_rate))
     sdaia = sdaia.rename_column("ref", "transcription")
+    def get_num_samples(utt):
+        # ex: (33792,) -> 33792
+        utt['num_samples'] = utt['audio']['array'].shape[0]
+        return utt
     # 2 columns: ref, file -> transcription, audio
-    return sdaia
+    # note that HuggingFace only allows 'train' to be a specified splitdef get_num_samples(utt):
+        # ex: (33792,) -> 33792
+    sdaia = sdaia.map(get_num_samples)
+    return sdaia['train']
 
 
 def get_parser():
@@ -93,7 +100,7 @@ def evaluate_sdaia(model, processor,
             audio = target_audio
 
         concatenated_sample = torch.from_numpy(audio)
-        inputs = processor(concatenated_sample,
+        inputs = processor(torch.from_numpy(sample["audio"]["array"]),
                            sampling_rate=sample["audio"]["sampling_rate"],
                            return_tensors="pt",
                            return_attention_mask=True).to(device, dtype=torch_dtype)
