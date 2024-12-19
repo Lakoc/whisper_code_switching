@@ -68,12 +68,6 @@ def evaluate_sdaia(model, processor,
     # fix the seed
     set_seed(seed)
 
-    gen_kwargs = {
-        "max_new_tokens": 440,
-        "num_beams": 1,
-        "return_timestamps": True,
-        "repetition_penalty": 1.2
-    }
 
     # create new dataset by concatenating samples from two languages
     gt = []
@@ -86,11 +80,11 @@ def evaluate_sdaia(model, processor,
         ic_example = sdaia[in_context_index]
 
         # target utterance
-        target_audio = sample
+        target_audio = sample["audio"]["array"]
         if SPEECH_CONTEXT:
             audio = np.concatenate([
                 # in-context example
-                ic_example,
+                ic_example["audio"]["array"],
                 np.zeros(round(sample["audio"]["sampling_rate"] * pause)),
                 target_audio
             ])
@@ -100,7 +94,7 @@ def evaluate_sdaia(model, processor,
             audio = target_audio
 
         concatenated_sample = torch.from_numpy(audio)
-        inputs = processor(torch.from_numpy(sample["audio"]["array"]),
+        inputs = processor(concatenated_sample,
                            sampling_rate=sample["audio"]["sampling_rate"],
                            return_tensors="pt",
                            return_attention_mask=True).to(device, dtype=torch_dtype)
@@ -134,9 +128,14 @@ def evaluate_sdaia(model, processor,
         # thus we do not need to remove <EOT>
         # (whereas add_special_tokens=True will add this token and we need to remove it to prevent early termination)
         context_labels_length = context_token_ids.shape[1]
-        gen_kwargs['decoder_input_ids'] = context_token_ids
+        gen_kwargs = {
+            "max_new_tokens": 440 - context_labels_length - 1, # TODO: I wonder if this is an issue for longer segments
+            "num_beams": 1,
+            "return_timestamps": True,
+            "repetition_penalty": 1.2
+        }
         # can inspect what the context looks like with processor.tokenizer.decode(context_token_ids, skip_special_tokens=False)
-
+        gen_kwargs['decoder_input_ids'] = context_token_ids
         pred_ids = model.generate(**inputs, **gen_kwargs)
         # remove the in-context example from the reference using context_labels_length
         pred_ids = pred_ids[:, context_labels_length:]
