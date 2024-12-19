@@ -46,8 +46,8 @@ def get_parser():
         "--lang_code",
         default="cs_cz",
         required=True,
-        choices=["cs_cz", "ar_eg"],
-        help="FLEURS language code. lang_locale"
+        choices=["cs_cz", "ar_eg", "sdaia"],
+        help="FLEURS language code. lang_locale. Exception: sdaia"
     )
     parser.add_argument(
         "--speech_context",
