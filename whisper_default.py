@@ -174,7 +174,7 @@ if __name__ == "__main__":
 
     SPLIT = "validation"
     PAUSE = 1.0
-    MAX_SINGLE_LAN_SEGMENT_LEN = 6.0
+    MAX_SINGLE_LAN_SEGMENT_LEN = 12.0 if LANG_CODE == "sdaia" else 6.0
 
     device = "cuda:4" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
